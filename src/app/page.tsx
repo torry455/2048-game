@@ -1,103 +1,223 @@
-import Image from "next/image";
+"use client";
 
-export default function Home() {
+import { useState, useEffect, useCallback } from "react";
+
+type Direction = "left" | "right" | "up" | "down";
+
+const SIZE = 4;
+
+const getEmptyBoard = (): number[][] =>
+  Array.from({ length: SIZE }, () => Array(SIZE).fill(0));
+
+const addRandomTile = (board: number[][]): number[][] => {
+  const emptyPositions = board.flatMap((row, r) =>
+    row
+      .map((cell, c) => (cell === 0 ? { r, c } : null))
+      .filter((pos): pos is { r: number; c: number } => pos !== null)
+  );
+
+  if (emptyPositions.length === 0) return board;
+
+  const { r, c } = emptyPositions[Math.floor(Math.random() * emptyPositions.length)];
+  const newBoard = board.map(row => [...row]);
+  newBoard[r][c] = Math.random() < 0.9 ? 2 : 4;
+
+  return newBoard;
+};
+
+const boardsEqual = (a: number[][], b: number[][]): boolean =>
+  a.every((row, r) => row.every((val, c) => val === b[r][c]));
+
+const moveLeftCustom = (board: number[][], collectFromBottom = false): number[][] => {
+  const reverseRow = (row: number[]) => [...row].reverse();
+
+  return board.map(row => {
+    const processedRow = collectFromBottom ? reverseRow(row) : row;
+    const filtered = processedRow.filter(n => n !== 0);
+
+    const merged: number[] = [];
+    let skip = false;
+    for (let i = 0; i < filtered.length; i++) {
+      if (skip) {
+        skip = false;
+        continue;
+      }
+      if (i + 1 < filtered.length && filtered[i] === filtered[i + 1]) {
+        merged.push(filtered[i] * 2);
+        skip = true;
+      } else {
+        merged.push(filtered[i]);
+      }
+    }
+
+    while (merged.length < SIZE) merged.push(0);
+
+    return collectFromBottom ? reverseRow(merged) : merged;
+  });
+};
+
+const rotate = (board: number[][]): number[][] => {
+  const newBoard = getEmptyBoard();
+  for (let r = 0; r < SIZE; r++) {
+    for (let c = 0; c < SIZE; c++) {
+      newBoard[c][SIZE - 1 - r] = board[r][c];
+    }
+  }
+  return newBoard;
+};
+
+const move = (board: number[][], direction: Direction): number[][] => {
+  switch (direction) {
+    case "left":
+      return moveLeftCustom(board, false);
+    case "right": {
+      const rotated = rotate(rotate(board));
+      const moved = moveLeftCustom(rotated, false);
+      return rotate(rotate(moved));
+    }
+    case "up": {
+      const rotated = rotate(board);
+      const moved = moveLeftCustom(rotated, false);
+      return rotate(rotate(rotate(moved)));
+    }
+    case "down": {
+      const rotated = rotate(rotate(rotate(board)));
+      const moved = moveLeftCustom(rotated, true);
+      return rotate(moved);
+    }
+  }
+};
+
+const getTileColor = (num: number): string => {
+  const colors: Record<number, string> = {
+    2: "bg-yellow-200 text-yellow-900",
+    4: "bg-yellow-300 text-yellow-900",
+    8: "bg-orange-400 text-white",
+    16: "bg-orange-500 text-white",
+    32: "bg-red-400 text-white",
+    64: "bg-red-600 text-white",
+    128: "bg-green-400 text-white",
+    256: "bg-green-600 text-white",
+    512: "bg-blue-400 text-white",
+    1024: "bg-blue-600 text-white",
+    2048: "bg-purple-600 text-white",
+  };
+  return colors[num] ?? "bg-gray-300 text-gray-800";
+};
+
+export default function Game2048() {
+  const [board, setBoard] = useState<number[][]>(getEmptyBoard);
+  const [isInitialized, setIsInitialized] = useState(false);
+
+  useEffect(() => {
+    const saved = localStorage.getItem("board");
+    if (saved) {
+      setBoard(JSON.parse(saved));
+    } else {
+      setBoard(addRandomTile(getEmptyBoard()));
+    }
+    setIsInitialized(true);
+  }, []);
+
+  useEffect(() => {
+    if (isInitialized) {
+      localStorage.setItem("board", JSON.stringify(board));
+    }
+  }, [board, isInitialized]);
+
+  const handleMove = useCallback(
+    (dir: Direction) => {
+      setBoard(prevBoard => {
+        const newBoard = move(prevBoard, dir);
+        if (boardsEqual(newBoard, prevBoard)) return prevBoard;
+        return addRandomTile(newBoard);
+      });
+    },
+    []
+  );
+
+  useEffect(() => {
+    const keyToDir: Record<string, Direction | undefined> = {
+      ArrowLeft: "left",
+      ArrowRight: "right",
+      ArrowUp: "up",
+      ArrowDown: "down",
+    };
+
+    const handleKey = (e: KeyboardEvent) => {
+      const dir = keyToDir[e.key];
+      if (dir) {
+        e.preventDefault();
+        handleMove(dir);
+      }
+    };
+
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [handleMove]);
+
+  useEffect(() => {
+    let startX = 0;
+    let startY = 0;
+    let isDragging = false;
+
+    const handleMouseDown = (e: MouseEvent) => {
+      startX = e.clientX;
+      startY = e.clientY;
+      isDragging = true;
+    };
+
+    const handleMouseUp = (e: MouseEvent) => {
+      if (!isDragging) return;
+      isDragging = false;
+
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+
+      if (Math.max(Math.abs(dx), Math.abs(dy)) < 20) return;
+
+      const dir: Direction = Math.abs(dx) > Math.abs(dy)
+        ? dx > 0 ? "right" : "left"
+        : dy > 0 ? "down" : "up";
+
+      handleMove(dir);
+    };
+
+    window.addEventListener("mousedown", handleMouseDown);
+    window.addEventListener("mouseup", handleMouseUp);
+
+    return () => {
+      window.removeEventListener("mousedown", handleMouseDown);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [handleMove]);
+
+  const resetGame = () => {
+    localStorage.removeItem("board");
+    setBoard(addRandomTile(getEmptyBoard()));
+  };
+
   return (
-    <div className="font-sans grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="font-mono list-inside list-decimal text-sm/6 text-center sm:text-left">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] font-mono font-semibold px-1 py-0.5 rounded">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
-
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+    <main className="flex flex-col items-center justify-center min-h-screen bg-gray-100 p-4">
+      <h1 className="text-4xl font-bold mb-6">2048 Game</h1>
+      <div className="grid grid-cols-4 gap-4 bg-gray-300 p-4 rounded-lg shadow-lg">
+        {board.flat().map((num, i) => (
+          <div
+            key={i}
+            className={`cursor-pointer flex items-center justify-center w-20 h-20 rounded-md font-bold text-2xl select-none
+              ${num === 0 ? "bg-gray-200" : getTileColor(num)}
+            `}
           >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
-        </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
-    </div>
+            {num !== 0 ? num : ""}
+          </div>
+        ))}
+      </div>
+      <button
+        onClick={resetGame}
+        className="cursor-pointer mt-6 px-4 py-2 bg-red-400 text-white rounded hover:bg-red-500 transition"
+      >
+        Start again
+      </button>
+    </main>
   );
 }
